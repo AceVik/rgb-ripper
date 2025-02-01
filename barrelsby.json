@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/barrelsby@latest/barrelsby.schema.json",
+  "directory": [
+    "./src/entities",
+    "./src/repositories",
+    "./src/services",
+    "./src/utils"
+  ],
+  "barrelName": "index.ts",
+  "delete": true,
+  "singleQuotes": true,
+  "noHeader": true
+}

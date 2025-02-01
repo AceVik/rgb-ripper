@@ -4,17 +4,22 @@
   "description": "Simple nodejs typescript blueprint.",
   "main": "index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx src/index.ts",
+    "dev:watch": "tsx watch src/index.ts",
     "build": "tsc && tsc-alias",
     "start": "node dist/index.js",
     "lint": "eslint . --ext .ts,.js",
     "lint:fix": "eslint . --ext .ts,.js --fix",
     "format": "prettier --write .",
-    "generate:barrels": "barrelsby",
+    "generate:barrels": "barrelsby --config ./barrelsby.json",
     "test": "jest --config ./jest.config.ts",
     "test:watch": "jest --watch --config ./jest.config.ts"
   },
-  "keywords": ["typescript", "nodejs", "blueprint"],
+  "keywords": [
+    "typescript",
+    "nodejs",
+    "blueprint"
+  ],
   "author": "",
   "license": "MIT",
   "devDependencies": {
@@ -32,5 +37,24 @@
     "tsc-alias": "^1.8.10",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "axios-cookiejar-support": "^5.0.5",
+    "cheerio": "^1.0.0",
+    "date-fns": "^4.1.0",
+    "dotenv": "^16.4.7",
+    "pretty-bytes": "^6.1.1",
+    "reflect-metadata": "^0.2.2",
+    "sqlite3": "^5.1.7",
+    "tough-cookie": "^5.1.0",
+    "typedi": "^0.10.0",
+    "typeorm": "^0.3.20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sqlite3"
+    ]
   }
 }
