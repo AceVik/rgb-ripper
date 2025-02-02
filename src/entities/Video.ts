@@ -2,9 +2,12 @@ import { Column, CreateDateColumn, Entity, JoinTable, ManyToMany, PrimaryColumn 
 import { Model } from '@/entities/Model';
 import { Tag } from '@/entities/Tag';
 
+export const videoStatus = ['todo', 'to-download-stream', 'to-download-video', 'ready', 'error'] as const;
+export type VideoStatus = (typeof videoStatus)[number];
+
 @Entity('videos')
 export class Video {
-  @PrimaryColumn({ type: 'varchar', length: 265 })
+  @PrimaryColumn({ type: 'varchar', length: 32 })
   hashId!: string;
 
   @Column({ type: 'varchar', length: 265 })
@@ -15,6 +18,9 @@ export class Video {
 
   @Column({ type: 'varchar', length: 1024 })
   downloadUrl!: string;
+
+  @Column({ type: 'varchar', length: 1024 })
+  streamUrl!: string;
 
   @Column({ type: 'varchar', length: 256 })
   fileName!: string;
@@ -27,6 +33,15 @@ export class Video {
 
   @Column({ type: 'varchar', length: 1024 })
   img!: string;
+
+  @Column({ type: 'varchar', length: 1024 })
+  picturesUrl!: string;
+
+  @Column({ type: 'varchar', length: 1024 })
+  picturesDir!: string;
+
+  @Column({ type: 'varchar', length: 32 })
+  status!: VideoStatus;
 
   @ManyToMany(() => Model, (model) => model.videos)
   @JoinTable({

@@ -1,11 +1,8 @@
-import * as path from 'node:path';
-import * as fs from 'node:fs';
 import { Inject, Service } from 'typedi';
-import { filesDir, videosDir } from '@/paths';
 import { WebService, CryptoService } from '@/services';
-import { VideoRepository } from '@/repositories';
+import { VideoData, VideoRepository } from '@/repositories';
 import { jsLiteralToJSON } from '@/utils';
-import { DownloadProgress } from '@/types';
+import { Model, Tag, Video } from '@/entities';
 
 export type VideoUrl = {
   hashId: string;
@@ -32,14 +29,9 @@ export type VideoMeta = {
   addDate: Date;
   models: ModelUrl[];
   tags: TagUrl[];
-  videoPath: string;
-  picturesPath: string;
-};
-
-export type VideoDownloadResult = {
-  fileName: string;
-  filePath: string;
-  fileSize: number;
+  downloadUrl: string;
+  streamUrl: string;
+  picturesUrl: string;
 };
 
 @Service()
@@ -63,7 +55,7 @@ export class VideoService {
 
         const href: string = hrefEm.attr('href')!;
         return {
-          hashId: this.cryptoService.sha256(href),
+          hashId: this.cryptoService.md5(href),
           title: hrefEm.attr('title')!,
           href,
           img: imgEm.attr('src0_1x') || imgEm.attr('src')!,
@@ -72,9 +64,7 @@ export class VideoService {
       .get<VideoUrl>();
   }
 
-  async getVideoUrls(untilLatestStored = true) {
-    const lastStoredVideo = untilLatestStored ? await this.videoRepository.getLastStoredVideo() : null;
-
+  async getVideoUrls() {
     const videoUrls: VideoUrl[] = [];
     let page = 1;
     let hasMore = true;
@@ -85,20 +75,10 @@ export class VideoService {
 
       if (!hasMore) {
         console.info('No more videos found');
-      } else if (lastStoredVideo) {
-        const lastStoredIndex = urls.findIndex((url) => url.hashId === lastStoredVideo.hashId);
-        if (lastStoredIndex >= 0) {
-          urls.splice(lastStoredIndex);
-          hasMore = false;
-          console.info('Last stored video found, stopping');
-        }
+      } else {
+        videoUrls.push(...urls);
+        page++;
       }
-
-      // TODO: Remoe this line
-      hasMore = false;
-
-      videoUrls.push(...urls);
-      page++;
     } while (hasMore);
 
     return videoUrls;
@@ -121,7 +101,7 @@ export class VideoService {
         const $el = $(el);
         const href = $el.attr('href')!;
         return {
-          hashId: this.cryptoService.sha256(href),
+          hashId: this.cryptoService.md5(href),
           name: $el.text().trim(),
           href,
         } satisfies ModelUrl;
@@ -133,7 +113,7 @@ export class VideoService {
         const $el = $(el);
         const href = $el.attr('href')!;
         return {
-          hashId: this.cryptoService.sha256(href),
+          hashId: this.cryptoService.md5(href),
           name: $el.text().trim(),
           href,
         } satisfies TagUrl;
@@ -144,7 +124,11 @@ export class VideoService {
     const rx = /.+?movie\["fullmp4"\]\[".+?"\] .*?=.*? ({.+?})/s;
     const mt = scriptEm.text().match(rx);
 
+    const rx2 = /df_movie\[.+?=.+?({.+?})/s;
+    const mt2 = scriptEm.text().match(rx2);
+
     const videoPath = mt ? JSON.parse(jsLiteralToJSON(mt[1])).path : null;
+    const videoStreamPath = mt2 ? JSON.parse(jsLiteralToJSON(mt2[1])).path : null;
 
     const picturesPath = $('.subnav .content_tab_wrapper li:nth-child(2) a').attr('href')!;
 
@@ -154,79 +138,39 @@ export class VideoService {
       addDate: new Date(addDate),
       models,
       tags,
-      videoPath,
-      picturesPath,
+      downloadUrl: videoPath,
+      streamUrl: videoStreamPath,
+      picturesUrl: picturesPath,
     };
   }
 
-  public async downloadVideo(hashId: string, videoUrl: string, onProgress?: (progress: DownloadProgress) => void): Promise<VideoDownloadResult> {
-    // Extract filename from videoPath
-    const fileName = path.basename(videoUrl);
+  async getVideoPictureUrls(videoPicturesUrl: string): Promise<string[]> {
+    const pageTextRes = await this.webService.getAsText(videoPicturesUrl);
+    const rx = /ptx\["jpg"\] = {};\s+(.+?)\s+togglestatus = true;/s;
+    const mt = pageTextRes.data.match(rx);
 
-    // Create a folder name combining hashId and filename (without extension)
-    const fileNameNoExt = path.parse(fileName).name;
-    const folderName = `${hashId}_${fileNameNoExt}`;
+    if (!mt) {
+      throw new Error('No pictures found');
+    }
 
-    // Define full folder path
-    const targetFolder = path.join(videosDir, folderName);
-
-    // Create the folder if it doesn't exist
-    fs.mkdirSync(targetFolder, { recursive: true });
-
-    // Build full output path for the video
-    const targetFilePath = path.join(targetFolder, fileName);
-
-    // Get the stream
-    const response = await this.webService.getVideoStream(videoUrl);
-    const writer = fs.createWriteStream(targetFilePath);
-    response.data.pipe(writer);
-
-    const totalSize = parseInt(response.headers['content-length'] || '0', 10);
-    let downloaded = 0;
-    const startTime = Date.now();
-
-    // Listen for data events to track progress
-    response.data.on('data', (chunk: Buffer) => {
-      downloaded += chunk.length;
-
-      const elapsedSec = (Date.now() - startTime) / 1000;
-      const estimatedSpeed = downloaded / elapsedSec; // bytes/sec
-      let estimatedTime = 0;
-
-      if (totalSize > 0 && downloaded < totalSize) {
-        const remainingBytes = totalSize - downloaded;
-        estimatedTime = remainingBytes / estimatedSpeed; // seconds
-      }
-
-      if (onProgress) {
-        onProgress({
-          totalSize,
-          downloaded,
-          startTime,
-          estimatedSpeed,
-          estimatedTime,
-        });
-      }
+    return mt[1].split('\n').map((line) => {
+      return JSON.parse(jsLiteralToJSON(line.substring(line.indexOf('{'), line.lastIndexOf('}') + 1).trim())).src;
     });
+  }
 
-    // Return a promise which resolves after download
-    return new Promise<VideoDownloadResult>((resolve, reject) => {
-      writer.on('finish', () => {
-        console.log(`Video downloaded: ${targetFilePath}`);
-        resolve({
-          fileName,
-          filePath: path.relative(filesDir, targetFilePath),
-          fileSize: totalSize,
-        });
-      });
-      writer.on('error', (err) => {
-        console.error(`Error downloading video: ${videoUrl}`, err);
-        // Cleanup file if it was created
-        if (fs.existsSync(targetFilePath)) {
-          fs.unlinkSync(targetFilePath);
-        }
-        reject(err);
-      });
+  async createVideoIfNotExists(videoUrl: VideoUrl) {
+    const video = await this.videoRepository.getVideoByHashId(videoUrl.hashId);
+    if (video) {
+      return video;
+    }
+
+    return this.videoRepository.createVideo({
+      videoUrl,
+      status: 'todo',
     });
+  }
+
+  async updateVideo(video: Video, data: Partial<VideoData>) {
+    return this.videoRepository.updateVideo(video, data);
   }
 }

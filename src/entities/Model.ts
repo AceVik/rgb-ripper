@@ -3,7 +3,7 @@ import { Video } from '@/entities/Video';
 
 @Entity('models')
 export class Model {
-  @PrimaryColumn({ type: 'varchar', length: 265 })
+  @PrimaryColumn({ type: 'varchar', length: 32 })
   hashId!: string;
 
   @Column({ type: 'varchar', length: 265 })

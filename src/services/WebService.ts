@@ -46,4 +46,12 @@ export class WebService {
   async getModelPicture(url: string) {
     return webClient.get<ArrayBuffer>(url, { responseType: 'arraybuffer' });
   }
+
+  async getAsText(url: string) {
+    return webClient.get<string>(url, { responseType: 'text' });
+  }
+
+  async getAsArrayBuffer(url: string) {
+    return webClient.get<ArrayBuffer>(url, { responseType: 'arraybuffer' });
+  }
 }

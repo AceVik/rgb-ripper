@@ -48,7 +48,7 @@ export class ModelService {
       fs.writeFileSync(imagePath, Buffer.from(image.data));
     }
 
-    console.info(`Creating model ${model.name}`, meta);
+    console.info(`Creating model ${model.name}`);
     try {
       const newModel = await this.modelRepository.createModel(model, meta, imagePath ? path.relative(filesDir, imagePath) : null);
       return newModel;
