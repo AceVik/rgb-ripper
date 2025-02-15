@@ -1,18 +1,26 @@
 import process from 'node:process';
 import { Service } from 'typedi';
 import { load as loadDOM } from 'cheerio';
-import { webClient } from '@/utils';
+import { BASE_URL, webClient } from '@/utils';
 
 @Service()
 export class WebService {
   async login() {
+    const username = process.env.USERNAME?.trim();
+    const password = process.env.PASSWORD?.trim();
+
+    if (!username?.length || !password?.length) {
+      console.error('Username or password not set. Check your .env vars. Exiting.');
+      process.exit(1);
+    }
+
     console.info('Logging in...');
     await webClient.get('/members');
     const params = new URLSearchParams({
       rlm: 'Welcome Members',
-      for: 'https%3a%2f%2fwww%2erealgangbangs%2ecom%2fmembers%2f',
-      uid: process.env.USERNAME,
-      pwd: process.env.PASSWORD,
+      for: encodeURIComponent(`${BASE_URL}/members/`),
+      uid: username,
+      pwd: password,
       rmb: 'y',
       Submit: 'MEMBER LOGIN',
     });

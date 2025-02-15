@@ -81,9 +81,20 @@ export class Main {
   private readonly cryptoService!: CryptoService;
 
   async run() {
-    if (!(await this.webService.login())) {
-      throw new Error('Failed to login');
+    try {
+      if (!(await this.webService.login())) {
+        console.error('Failed to login. - maybe invalid credentials. Exiting.');
+        process.exit(1);
+      }
+    } catch (err: unknown) {
+      if ((err as AxiosError).response?.status === 403) {
+        console.error('Download limit reached for today. Exiting.');
+        process.exit(1);
+      }
+
+      console.error('Failed to run', err);
     }
+
     await this.syncVideos();
   }
 
@@ -174,13 +185,14 @@ export class Main {
             continue;
           }
         }
-      } catch (err: any) {
-        if ((err.status || err.data?.status) === 403) {
+      } catch (err: unknown) {
+        const responseStatus = (err as AxiosError).status || (err as AxiosError).response?.status;
+        if (responseStatus === 403) {
           console.log('Download limit reached. Exiting.');
           process.exit(1);
         }
 
-        console.error(`Failed to process video ${videoUrl.title} [${videoUrl.href}]`, err.status || err.data?.status);
+        console.error(`Failed to process video ${videoUrl.title} [${videoUrl.href}]`, responseStatus);
       }
     }
   }
