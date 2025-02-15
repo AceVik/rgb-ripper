@@ -5,6 +5,7 @@ import { AxiosResponse } from 'axios';
 import { WebService, HlsService, FfmpegService } from '@/services';
 import { filesDir, videosDir } from '@/paths';
 import { Video } from '@/entities';
+import { createQueue } from '@/utils/async-queue';
 
 export type VideoDownloadResult = {
   fileName: string;
@@ -42,7 +43,46 @@ export class DownloadService {
   /**
    * Download a video file via a direct URL.
    */
-  public async downloadVideo(hashId: string, videoUrl: string, onProgress?: (progress: DownloadProgress) => void): Promise<VideoDownloadResult> {
+  public async downloadVideo(hashId: string, videoUrl: string, onProgress?: (progress: DownloadProgress) => void): Promise<VideoDownloadResult | null> {
+    const { fileName, targetFolder, targetFilePath } = this.prepareFilePaths(hashId, videoUrl);
+    try {
+      const response = await this.webService.getVideoStream(videoUrl);
+      const totalSize = parseInt(response.headers['content-length'] || '0', 10);
+
+      // Falls bereits vollständig heruntergeladen, direkt zurückgeben
+      if (this.isFileAlreadyComplete(targetFilePath, totalSize)) {
+        console.log(`Video already downloaded: ${targetFilePath}`);
+        return {
+          fileName,
+          filePath: path.relative(filesDir, targetFilePath),
+          fileSize: totalSize,
+        };
+      }
+
+      const maxAttempts = 3;
+      let attempts = 0;
+      while (attempts < maxAttempts) {
+        attempts++;
+        try {
+          return await this.tryDownloadVideo(hashId, videoUrl, onProgress);
+        } catch (err: any) {
+          console.error(`Download attempt ${attempts} failed: ${err.message}`);
+          // Aufräumen des temporären Files, falls vorhanden
+          this.cleanupFileOnError(`${targetFilePath}.temp`);
+          if (attempts >= maxAttempts) {
+            throw new Error(`Download failed after ${attempts} attempts: ${err.message}`);
+          }
+          await this.delay(1000); // kurze Pause vor dem nächsten Versuch
+        }
+      }
+      throw new Error('Download failed unexpectedly');
+    } catch (err: any) {
+      console.error(`Error downloading video: ${videoUrl}`);
+      return null;
+    }
+  }
+
+  private async tryDownloadVideo(hashId: string, videoUrl: string, onProgress?: (progress: DownloadProgress) => void): Promise<VideoDownloadResult> {
     const { fileName, targetFolder, targetFilePath } = this.prepareFilePaths(hashId, videoUrl);
     const response = await this.webService.getVideoStream(videoUrl);
     const totalSize = parseInt(response.headers['content-length'] || '0', 10);
@@ -63,7 +103,26 @@ export class DownloadService {
     let downloaded = 0;
     const startTime = Date.now();
 
+    // Watchdog configuration:
+    const maxInactivity = 30000; // max. 30 seconds without receiving data
+    const checkInterval = 5000; // check every 5 seconds
+    let lastChunkTime = Date.now();
+
+    // Set up a watchdog timer that checks if the stream is stalled
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastChunkTime > maxInactivity) {
+        console.log();
+        console.error('Download stalled: No data received in the last 30 seconds.');
+        // Destroy the stream with an error to trigger the retry mechanism
+        const error = new Error('Download stalled due to inactivity');
+        response.data.destroy(error);
+        writer.destroy(error);
+        clearInterval(watchdog);
+      }
+    }, checkInterval);
+
     response.data.on('data', (chunk: Buffer) => {
+      lastChunkTime = Date.now(); // reset watchdog timer on new data
       downloaded += chunk.length;
       const elapsedSec = (Date.now() - startTime) / 1000;
       const estimatedSpeed = downloaded / elapsedSec;
@@ -75,7 +134,9 @@ export class DownloadService {
 
     return new Promise<VideoDownloadResult>((resolve, reject) => {
       writer.on('finish', () => {
+        clearInterval(watchdog); // clear watchdog on finish
         fs.renameSync(tempFilePath, targetFilePath);
+        console.log();
         console.log(`Video downloaded: ${targetFilePath}`);
         resolve({
           fileName,
@@ -84,6 +145,7 @@ export class DownloadService {
         });
       });
       writer.on('error', (err) => {
+        clearInterval(watchdog);
         console.error(`Error downloading video: ${videoUrl}`, err);
         this.cleanupFileOnError(tempFilePath);
         reject(err);
@@ -95,39 +157,6 @@ export class DownloadService {
    * Download an HLS video:
    * - Loads the master playlist and selects the best variant.
    * - Downloads alle TS segments parallel.
-   * - Schreibt die Segmente sequentiell in eine temporäre .ts Datei mithilfe des folgenden Code-Blocks:
-   *
-   *   await Promise.all(
-   *     segmentPaths.map(async (segment, index) => {
-   *       const url = this.hlsService.resolveM3U8Url(mediaM3u8Url, segment);
-   *       const response = await this.downloadSegmentWithRetry(url);
-   *       totalSize += parseInt(response.headers['content-length'] || '0', 10);
-   *       const buffer = Buffer.from(response.data);
-   *       totalDownloaded += buffer.length;
-   *       downloadedParts++;
-   *
-   *       // Report intermediate progress without final total size (set to 0)
-   *       if (onProgress) {
-   *         const elapsedSec = (Date.now() - downloadStartTime) / 1000;
-   *         onProgress({
-   *           totalParts: segmentPaths.length,
-   *           downloadedParts,
-   *           startTime: downloadStartTime,
-   *           estimatedSpeed: downloadedDuringDownload / elapsedSec,
-   *           estimatedTime: (segmentPaths.length - downloadedParts) / (downloadedParts / elapsedSec),
-   *         });
-   *       }
-   *
-   *       // Write the segment buffer to the temporary .ts file if index == nextSegmentIndexToWrite else wait and retry write
-   *       while (index !== nextSegmentIndexToWrite) {
-   *         await new Promise<void>((resolve) => setTimeout(resolve, 32));
-   *       }
-   *
-   *       tsWriter.write(buffer);
-   *       nextSegmentIndexToWrite++;
-   *     }),
-   *   );
-   *
    * - Konvertiert anschließend die .ts Datei in eine .mp4 Datei.
    */
   public async downloadVideoHls(hashId: string, videoHlsUrl: string, onProgress?: (progress: StreamDownloadProgress) => void): Promise<VideoDownloadResult> {
@@ -170,34 +199,39 @@ export class DownloadService {
 
     const tsWriter = fs.createWriteStream(tempTsPath);
 
+    const downloadQueue = createQueue<AxiosResponse>(32);
+
     await Promise.all(
-      segmentPaths.map(async (segment, index) => {
-        const url = this.hlsService.resolveM3U8Url(mediaM3u8Url, segment);
-        const response = await this.downloadSegmentWithRetry(url);
-        totalSize += parseInt(response.headers['content-length'] || '0', 10);
-        const buffer = Buffer.from(response.data);
-        totalDownloaded += buffer.length;
-        downloadedDuringDownload += buffer.length;
-        downloadedParts++;
+      segmentPaths.map((segment, index) => {
+        return downloadQueue.add(async () => {
+          const url = this.hlsService.resolveM3U8Url(mediaM3u8Url, segment);
+          const response = await this.downloadSegmentWithRetry(url);
+          totalSize += parseInt(response.headers['content-length'] || '0', 10);
+          const buffer = Buffer.from(response.data);
+          totalDownloaded += buffer.length;
+          downloadedDuringDownload += buffer.length;
+          downloadedParts++;
 
-        // Report intermediate progress
-        if (onProgress) {
-          const elapsedSec = (Date.now() - downloadStartTime) / 1000;
-          onProgress({
-            totalParts: segmentPaths.length,
-            downloadedParts,
-            startTime: downloadStartTime,
-            estimatedSpeed: downloadedDuringDownload / elapsedSec,
-            estimatedTime: (segmentPaths.length - downloadedParts) / (downloadedParts / elapsedSec),
-          });
-        }
+          // Report intermediate progress
+          if (onProgress) {
+            const elapsedSec = (Date.now() - downloadStartTime) / 1000;
+            onProgress({
+              totalParts: segmentPaths.length,
+              downloadedParts,
+              startTime: downloadStartTime,
+              estimatedSpeed: downloadedDuringDownload / elapsedSec,
+              estimatedTime: (segmentPaths.length - downloadedParts) / (downloadedParts / elapsedSec),
+            });
+          }
 
-        // Warten, bis die Schreibreihenfolge erreicht ist
-        while (index !== nextSegmentIndexToWrite) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 32));
-        }
-        tsWriter.write(buffer);
-        nextSegmentIndexToWrite++;
+          // Warten, bis die Schreibreihenfolge erreicht ist
+          while (index !== nextSegmentIndexToWrite) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 32));
+          }
+          tsWriter.write(buffer);
+          nextSegmentIndexToWrite++;
+          return response;
+        });
       }),
     );
 
@@ -216,6 +250,7 @@ export class DownloadService {
       fs.unlinkSync(tempTsPath);
     }
 
+    console.log();
     console.log(`Video downloaded and converted: ${targetMp4Path}`);
     return {
       fileName: mp4FileName,
@@ -295,16 +330,24 @@ export class DownloadService {
   }
 
   async downloadPictureForVideo(video: Video, ...pictureUrls: string[]) {
+    if (!video.downloadUrl?.length) {
+      throw new Error('Video has no download URL');
+    }
+
     const { targetFolder } = this.prepareFilePaths(video.hashId, video.downloadUrl);
     const picturesDir = path.join(targetFolder, 'pictures');
     fs.mkdirSync(picturesDir, { recursive: true });
 
+    const pictureQueue = createQueue(5);
+
     await Promise.all(
-      pictureUrls.map(async (pictureUrl, index) => {
-        const pictureFileName = path.basename(pictureUrl);
-        const pictureFilePath = path.join(picturesDir, pictureFileName);
-        const response = await this.webService.getAsArrayBuffer(pictureUrl);
-        fs.writeFileSync(pictureFilePath, Buffer.from(response.data));
+      pictureUrls.map((pictureUrl) => {
+        return pictureQueue.add(async () => {
+          const pictureFileName = path.basename(pictureUrl);
+          const pictureFilePath = path.join(picturesDir, pictureFileName);
+          const response = await this.webService.getAsArrayBuffer(pictureUrl);
+          fs.writeFileSync(pictureFilePath, Buffer.from(response.data));
+        });
       }),
     );
 

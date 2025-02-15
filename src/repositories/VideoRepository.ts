@@ -11,6 +11,8 @@ export type VideoData = {
   models?: Model[];
   tags?: Tag[];
   status: VideoStatus;
+  sha512?: string;
+  sha512Stream?: string;
 };
 
 @Service()
@@ -88,6 +90,14 @@ export class VideoRepository {
 
     if (data.status) {
       video.status = data.status;
+    }
+
+    if (data.sha512) {
+      video.sha512 = data.sha512;
+    }
+
+    if (data.sha512Stream) {
+      video.sha512Stream = data.sha512Stream;
     }
 
     return this.repository.save(video);

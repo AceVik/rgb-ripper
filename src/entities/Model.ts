@@ -25,11 +25,6 @@ export class Model {
   imagePath?: string | null;
 
   @ManyToMany(() => Video, (video) => video.models)
-  @JoinTable({
-    name: 'videos2models',
-    joinColumn: { name: 'videoHashId', referencedColumnName: 'hashId' },
-    inverseJoinColumn: { name: 'modelHashId', referencedColumnName: 'hashId' },
-  })
   videos!: Video[];
 
   @CreateDateColumn()

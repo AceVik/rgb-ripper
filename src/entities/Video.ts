@@ -1,4 +1,4 @@
-import { Column, CreateDateColumn, Entity, JoinTable, ManyToMany, PrimaryColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, Index, JoinTable, ManyToMany, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 import { Model } from '@/entities/Model';
 import { Tag } from '@/entities/Tag';
 
@@ -10,35 +10,55 @@ export class Video {
   @PrimaryColumn({ type: 'varchar', length: 32 })
   hashId!: string;
 
+  @Index({ unique: true })
+  @Column({ type: 'char', length: 128, nullable: true, default: null })
+  sha512!: string;
+
+  @Index({ unique: true })
+  @Column({ type: 'char', length: 128, nullable: true, default: null })
+  sha512Stream!: string;
+
   @Column({ type: 'varchar', length: 265 })
   title!: string;
 
   @Column({ type: 'varchar', length: 1024 })
   url!: string;
 
-  @Column({ type: 'varchar', length: 1024 })
-  downloadUrl!: string;
+  @Column({ type: 'varchar', length: 1024, nullable: true, default: null })
+  downloadUrl: string | null = null;
 
-  @Column({ type: 'varchar', length: 1024 })
-  streamUrl!: string;
+  @Column({ type: 'varchar', length: 1024, nullable: true, default: null })
+  streamUrl: string | null = null;
 
-  @Column({ type: 'varchar', length: 256 })
-  fileName!: string;
+  @Column({ type: 'varchar', length: 256, nullable: true, default: null })
+  fileName: string | null = null;
 
-  @Column({ type: 'bigint', unsigned: true })
-  fileSize!: number;
+  @Column({ type: 'bigint', unsigned: true, nullable: true, default: null })
+  fileSize: number | null = null;
 
-  @Column({ type: 'varchar', length: 1024 })
-  filePath!: string;
+  @Column({ type: 'varchar', length: 1024, nullable: true, default: null })
+  filePath: string | null = null;
+
+  get streamFilePath(): string | null {
+    if (!this.filePath?.length) {
+      return null;
+    }
+
+    if (this.filePath!.lastIndexOf('.stm.') >= 0) {
+      return this.filePath;
+    }
+
+    return this.filePath!.replace('.mp4', '.stm.mp4');
+  }
 
   @Column({ type: 'varchar', length: 1024 })
   img!: string;
 
-  @Column({ type: 'varchar', length: 1024 })
-  picturesUrl!: string;
+  @Column({ type: 'varchar', length: 1024, nullable: true, default: null })
+  picturesUrl: string | null = null;
 
-  @Column({ type: 'varchar', length: 1024 })
-  picturesDir!: string;
+  @Column({ type: 'varchar', length: 1024, nullable: true, default: null })
+  picturesDir: string | null = null;
 
   @Column({ type: 'varchar', length: 32 })
   status!: VideoStatus;
@@ -67,4 +87,7 @@ export class Video {
 
   @CreateDateColumn()
   createdAt!: Date;
+
+  @UpdateDateColumn()
+  updatedAt!: Date;
 }

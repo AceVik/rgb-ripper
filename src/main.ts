@@ -1,9 +1,10 @@
 import { Inject, Service } from 'typedi';
 import { intervalToDuration } from 'date-fns';
 import prettyBytes from 'pretty-bytes';
-import { WebService, VideoService, TagService, ModelService, DownloadService, DownloadProgress, StreamDownloadProgress } from '@/services';
+import { WebService, VideoService, TagService, ModelService, DownloadService, DownloadProgress, StreamDownloadProgress, CryptoService } from '@/services';
 import { AxiosError } from 'axios';
 import process from 'node:process';
+import { Video } from '@/entities';
 
 /**
  * Converts seconds to a hh:mm:ss formatted string.
@@ -76,6 +77,9 @@ export class Main {
   @Inject(() => DownloadService)
   private readonly downloadService!: DownloadService;
 
+  @Inject(() => CryptoService)
+  private readonly cryptoService!: CryptoService;
+
   async run() {
     if (!(await this.webService.login())) {
       throw new Error('Failed to login');
@@ -90,12 +94,26 @@ export class Main {
       return;
     }
 
+    let idx = 0;
     for (const videoUrl of videoUrls) {
+      idx++;
       try {
-        console.info(`Processing video ${videoUrl.title} [${videoUrl.href}]`);
+        console.info(`Processing video ${idx} of ${videoUrls.length} ${videoUrl.title} [${videoUrl.href}]`);
         let video = await this.videoService.createVideoIfNotExists(videoUrl);
 
-        if (video.status === 'todo') {
+        if (video.status === 'ready') {
+          // Create SHA512 hash for existing videos (if not already present)
+          if (!video.sha512) {
+            console.log(`Creating SHA512 hash for existing video ${video.title}`);
+            const [sha512, sha512Stream] = await Promise.all([
+              this.cryptoService.hashFile(video.filePath!),
+              this.cryptoService.hashFile(video.streamFilePath!),
+            ]);
+            return await this.videoService.updateVideo(video, { sha512, sha512Stream });
+          }
+
+          continue;
+        } else if (video.status === 'todo') {
           const meta = await this.videoService.getVideoMeta(videoUrl.href);
 
           const [models, tags] = await Promise.all([
@@ -112,38 +130,57 @@ export class Main {
         }
 
         if (video.status === 'to-download-stream') {
-          const downloadResult = await this.downloadService.downloadVideoHls(videoUrl.hashId, video.streamUrl, (progress) =>
+          const downloadResult = await this.downloadService.downloadVideoHls(videoUrl.hashId, video.streamUrl!, (progress) =>
             handleStreamDownloadProgress(progress, videoUrl.title),
           );
 
+          console.log(`Creating SHA512 hash for downloaded stream ${video.title}`);
+          const sha512Stream = await this.cryptoService.hashFile(downloadResult.filePath);
+
           video = await this.videoService.updateVideo(video, {
             downloadResult,
+            sha512Stream,
             status: 'to-download-video',
           });
         }
 
         if (video.status === 'to-download-video') {
-          const [downloadResult, picturesDir] = await Promise.all([
-            this.downloadService.downloadVideo(videoUrl.hashId, video.downloadUrl, (progress) => handleDownloadProgress(progress, videoUrl.title)),
-            this.downloadService.downloadPictureForVideo(video, ...(await this.videoService.getVideoPictureUrls(video.picturesDir))),
-          ]);
+          try {
+            const [downloadResult, picturesDir] = await Promise.all([
+              this.downloadService.downloadVideo(videoUrl.hashId, video.downloadUrl!, (progress) => handleDownloadProgress(progress, videoUrl.title)),
+              this.downloadService.downloadPictureForVideo(video, ...(await this.videoService.getVideoPictureUrls(video.picturesUrl!))),
+              async () => {
+                if (!video.sha512Stream) {
+                  console.log();
+                  console.log(`Creating SHA512 hash for downloaded stream ${video.title}`);
+                  const sha512Stream = await this.cryptoService.hashFile(video.streamFilePath!);
+                  video = await this.videoService.updateVideo(video, { sha512Stream });
+                }
+              },
+            ]);
 
-          video = await this.videoService.updateVideo(video, {
-            downloadResult,
-            picturesDir,
-            status: 'ready',
-          });
-        }
-      } catch (err) {
-        if (err instanceof AxiosError) {
-          if (err.status === 403) {
-            console.log('Download limit reached. Exiting.');
-            process.exit(1);
+            if (!!downloadResult) {
+              console.log(`Creating SHA512 hash for downloaded video ${video.title}`);
+              const sha512 = await this.cryptoService.hashFile(downloadResult.filePath);
+
+              video = await this.videoService.updateVideo(video, {
+                downloadResult,
+                picturesDir,
+                sha512,
+                status: 'ready',
+              });
+            }
+          } catch {
+            continue;
           }
-          console.error(`Failed to process video ${videoUrl.title} [${videoUrl.href}]`, err.status);
-        } else {
-          console.error(`Failed to process video ${videoUrl.title} [${videoUrl.href}]`, err);
         }
+      } catch (err: any) {
+        if ((err.status || err.data?.status) === 403) {
+          console.log('Download limit reached. Exiting.');
+          process.exit(1);
+        }
+
+        console.error(`Failed to process video ${videoUrl.title} [${videoUrl.href}]`, err.status || err.data?.status);
       }
     }
   }
