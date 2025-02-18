@@ -25,7 +25,10 @@ export class CryptoService {
           reject(error);
         }
       });
-      stream.on('error', (err) => reject(err));
+      stream.on('error', (err) => {
+        console.error(err);
+        reject(err);
+      });
     });
   }
 }

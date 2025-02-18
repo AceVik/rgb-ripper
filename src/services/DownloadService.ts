@@ -67,6 +67,10 @@ export class DownloadService {
           return await this.tryDownloadVideo(hashId, videoUrl, onProgress);
         } catch (err: any) {
           console.error(`Download attempt ${attempts} failed: ${err.message}`);
+
+          if (err.response.status === 403) {
+            attempts = maxAttempts;
+          }
           // Aufräumen des temporären Files, falls vorhanden
           this.cleanupFileOnError(`${targetFilePath}.temp`);
           if (attempts >= maxAttempts) {
@@ -104,8 +108,8 @@ export class DownloadService {
     const startTime = Date.now();
 
     // Watchdog configuration:
-    const maxInactivity = 30000; // max. 30 seconds without receiving data
-    const checkInterval = 5000; // check every 5 seconds
+    const maxInactivity = 60000; // max. 60 seconds without receiving data
+    const checkInterval = 15000; // check every 15 seconds
     let lastChunkTime = Date.now();
 
     // Set up a watchdog timer that checks if the stream is stalled

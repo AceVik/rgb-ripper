@@ -1,10 +1,10 @@
 import { Inject, Service } from 'typedi';
 import { intervalToDuration } from 'date-fns';
 import prettyBytes from 'pretty-bytes';
-import { WebService, VideoService, TagService, ModelService, DownloadService, DownloadProgress, StreamDownloadProgress, CryptoService } from '@/services';
+import { join } from 'path';
 import { AxiosError } from 'axios';
-import process from 'node:process';
-import { Video } from '@/entities';
+import { WebService, VideoService, TagService, ModelService, DownloadService, DownloadProgress, StreamDownloadProgress, CryptoService } from '@/services';
+import { filesDir } from '@/paths';
 
 /**
  * Converts seconds to a hh:mm:ss formatted string.
@@ -109,6 +109,7 @@ export class Main {
     for (const videoUrl of videoUrls) {
       idx++;
       try {
+        console.log();
         console.info(`Processing video ${idx} of ${videoUrls.length} ${videoUrl.title} [${videoUrl.href}]`);
         let video = await this.videoService.createVideoIfNotExists(videoUrl);
 
@@ -117,10 +118,10 @@ export class Main {
           if (!video.sha512) {
             console.log(`Creating SHA512 hash for existing video ${video.title}`);
             const [sha512, sha512Stream] = await Promise.all([
-              this.cryptoService.hashFile(video.filePath!),
-              this.cryptoService.hashFile(video.streamFilePath!),
+              this.cryptoService.hashFile(join(filesDir, video.filePath!)),
+              this.cryptoService.hashFile(join(filesDir, video.streamFilePath!)),
             ]);
-            return await this.videoService.updateVideo(video, { sha512, sha512Stream });
+            video = await this.videoService.updateVideo(video, { sha512, sha512Stream });
           }
 
           continue;
@@ -146,7 +147,7 @@ export class Main {
           );
 
           console.log(`Creating SHA512 hash for downloaded stream ${video.title}`);
-          const sha512Stream = await this.cryptoService.hashFile(downloadResult.filePath);
+          const sha512Stream = await this.cryptoService.hashFile(join(filesDir, downloadResult.filePath));
 
           video = await this.videoService.updateVideo(video, {
             downloadResult,
@@ -164,7 +165,7 @@ export class Main {
                 if (!video.sha512Stream) {
                   console.log();
                   console.log(`Creating SHA512 hash for downloaded stream ${video.title}`);
-                  const sha512Stream = await this.cryptoService.hashFile(video.streamFilePath!);
+                  const sha512Stream = await this.cryptoService.hashFile(join(filesDir, video.streamFilePath!));
                   video = await this.videoService.updateVideo(video, { sha512Stream });
                 }
               },
@@ -172,7 +173,7 @@ export class Main {
 
             if (!!downloadResult) {
               console.log(`Creating SHA512 hash for downloaded video ${video.title}`);
-              const sha512 = await this.cryptoService.hashFile(downloadResult.filePath);
+              const sha512 = await this.cryptoService.hashFile(join(filesDir, downloadResult.filePath));
 
               video = await this.videoService.updateVideo(video, {
                 downloadResult,
