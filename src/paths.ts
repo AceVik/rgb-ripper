@@ -6,7 +6,6 @@ export const rootDir = path.resolve(__dirname, '..');
 export const filesDir = process.env.FILES_DIR || path.resolve(rootDir, 'files');
 export const imagesDir = path.resolve(filesDir, 'images');
 export const videosDir = path.resolve(filesDir, 'videos');
-export const dbPath = path.resolve(filesDir, 'db.sqlite');
 
 export const initDirs = async () => {
   for (const dir of [filesDir, imagesDir, videosDir]) {
