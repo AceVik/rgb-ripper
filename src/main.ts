@@ -196,5 +196,8 @@ export class Main {
         console.error(`Failed to process video ${videoUrl.title} [${videoUrl.href}]`, responseStatus);
       }
     }
+
+    console.log();
+    console.log('Done syncing videos.');
   }
 }
