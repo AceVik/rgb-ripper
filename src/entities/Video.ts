@@ -10,11 +10,9 @@ export class Video {
   @PrimaryColumn({ type: 'varchar', length: 32 })
   hashId!: string;
 
-  @Index({ unique: true })
   @Column({ type: 'char', length: 128, nullable: true, default: null })
   sha512!: string;
 
-  @Index({ unique: true })
   @Column({ type: 'char', length: 128, nullable: true, default: null })
   sha512Stream!: string;
 
